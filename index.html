@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin: 20px 0; 
+        }
+        th, td { 
+            border: 1px solid #ddd; 
+            padding: 8px; 
+            text-align: left; 
+        }
+        th { 
+            background-color: #f4f4f4; 
+        }
+        tr:hover { 
+            background-color: #f1f1f1; 
+        }
+        .discount-badge { 
+            background: #ffcccc; 
+            color: #ff4444; 
+            border-radius: 20px; 
+            padding: 2px 8px; 
+            margin-left: 5px; 
+            font-weight: bold; 
+        }
+        .old-price { 
+            color: #888; 
+            text-decoration: line-through; 
+            font-size: 0.9em; 
+            margin-top: 4px; 
+        }
+        .modal { 
+            display: none; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.8); 
+            z-index: 9999; 
+        }
+        .modal-content { 
+            margin: 10% auto; 
+            max-width: 80%; 
+            padding: 20px; 
+            background: white; 
+            border-radius: 8px; 
+            text-align: center; 
+        }
+        .close { 
+            cursor: pointer; 
+            float: right; 
+            margin: -20px -20px 0 0; 
+            font-size: 24px; 
+        }
+        .filter-controls { 
+            display: flex; 
+            flex-direction: column; 
+            gap: 10px; 
+            margin-bottom: 20px; 
+        }
+        .sort-direction { 
+            cursor: pointer; 
+            font-size: 1.2em; 
+            margin-left: 10px; 
+        }
+        .filter-input { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+        }
+        .store-section { 
+            margin-bottom: 40px; 
+        }
+        .fixed-header { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            background: rgba(0,0,0,0.8); 
+            color: white; 
+            padding: 8px 16px; 
+            display: none; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3); 
+            z-index: 1000; 
+        }
+        @media (max-width: 600px) {
+            .fixed-header .nav-btn { 
+                font-size: 14px; 
+                padding: 4px; 
+            }
+            table { 
+                width: 100%; 
+            }
+            th:first-child, td:first-child { 
+                display: none; 
+            }
+            .old-price { 
+                margin-top: 8px; 
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="filter-controls">
+        <div>
+            <input type="text" id="productNameInput" placeholder="Введите название товара (например, Молоко)" class="filter-input">
+            <button onclick="generateReport()">Получить отчет</button>
+        </div>
+        <div>
+            <label>Сортировать по: 
+                <input type="radio" name="sort" onclick="sortAllTables('name')"> Название
+                <input type="radio" name="sort" onclick="sortAllTables('price')"> Цена
+            </label>
+            <span id="sortDirection" class="sort-direction" onclick="toggleSortDirection()">▼</span>
+        </div>
+        <div>
+            <label><input type="checkbox" id="hideNoDiscount" onchange="filterAllTables()"> Скрыть без скидки</label>
+        </div>
+        <div>
+            <input type="text" id="filterInput" class="filter-input" oninput="filterAllTables()" placeholder="Фильтр по названию">
+        </div>
+    </div>
+
+    <div id="fixedHeader" class="fixed-header">
+        <div>
+            <div class="nav-btn" id="prevStore">◀</div>
+            <div class="current-store" id="currentStore"></div>
+            <div class="nav-btn" id="nextStore">▶</div>
+        </div>
+    </div>
+
+    <div id="storesContainer"></div>
+    <div id="imageModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeImage()">&times;</span>
+            <img id="modalImage" style="max-width: 100%; height: auto;">
+        </div>
+    </div>
+
+    <script>
+        let sortDirection = 'desc';
+        let currentStoreIndex = 0;
+        const stores = [
+            { storeCode: "993602", storeType: "2", address: "Первомайская, д. 2б/2" },
+            { storeCode: "360006", storeType: "1", address: "Победы, д. 1" },
+            { storeCode: "360182", storeType: "1", address: "Набережная, д. 28в" },
+            { storeCode: "361880", storeType: "1", address: "Аленовская, д. 38" },
+            { storeCode: "360038", storeType: "1", address: "Космонавтов, д. 21" },
+            { storeCode: "360022", storeType: "1", address: "Космонавтов, д. 7/1" },
+            { storeCode: "360182", storeType: "1", address: "Космонавтов, д. 29б, 29в" }
+        ];
+
+        async function generateReport() {
+            const productName = document.getElementById('productNameInput').value;
+            const container = document.getElementById('storesContainer');
+            container.innerHTML = '<div style="text-align: center; padding: 20px;"><img src="https://via.placeholder.com/50" alt="Loading..."></div>';
+
+            const promises = stores.map(store => fetchStoreData(productName, store));
+            const storeDataList = await Promise.all(promises);
+
+            renderStores(storeDataList);
+        }
+
+        async function fetchStoreData(productName, store) {
+            const items = [];
+            let totalCount = 0;
+            let hasMore = true;
+            let offset = 0;
+
+            while (hasMore && offset < 1000) {
+                const response = await fetch('https://magnit.ru/webgate/v2/goods/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        term: productName,
+                        pagination: { offset, limit: 50, hasMore: true, totalCount: 1000 },
+                        sort: { order: sortDirection, type: 'discount' },
+                        onlyDiscount: true,
+                        includeAdultGoods: true,
+                        storeCode: store.storeCode,
+                        storeType: store.storeType,
+                        catalogType: "1"
+                    })
+                });
+
+                if (!response.ok) throw new Error('Ошибка API');
+
+                const data = await response.json();
+                totalCount = data.pagination.totalCount;
+                items.push(...data.items);
+                hasMore = data.pagination.hasMore;
+                offset += 50;
+            }
+
+            return { store, items, totalCount };
+        }
+
+        function renderStores(storeDataList) {
+            const container = document.getElementById('storesContainer');
+            container.innerHTML = '';
+
+            storeDataList.forEach(data => {
+                const storeSection = document.createElement('div');
+                storeSection.className = 'store-section';
+                storeSection.dataset.storeIndex = currentStoreIndex++;
+
+                storeSection.innerHTML = `
+                    <h3 class="store-title">${data.store.address}</h3>
+                    <p>Всего найдено товаров: ${data.items.length}</p>
+                    <table class="productTable">
+                        <tr>
+                            <th>Номер</th>
+                            <th>Наименование</th>
+                            <th>Цена</th>
+                        </tr>
+                    </table>
+                `;
+
+                const table = storeSection.querySelector('.productTable');
+                data.items.forEach((item, j) => {
+                    const formattedPrice = formatPrice(item.price);
+                    const promotion = item.promotion || {};
+                    const discount = promotion.discountPercent || 'N/A';
+                    const oldPrice = promotion.oldPrice ? formatPrice(promotion.oldPrice) : 'N/A';
+                    const imageUrl = item.gallery?.[0]?.url || 'N/A';
+
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${j + 1}</td>
+                        <td onclick="showImage('${imageUrl}')">${item.name || 'N/A'}</td>
+                        <td class="price-container">
+                            <div class="price-row">
+                                <span class="current-price">${formattedPrice.replace(' руб.', '')}</span>
+                                ${discount !== 'N/A' ? `<span class="discount-badge">-${discount}%</span>` : ''}
+                            </div>
+                            ${oldPrice !== 'N/A' ? `<div class="old-price"><s>${oldPrice.replace(' руб.', '')}</s></div>` : ''}
+                        </td>
+                    `;
+                    table.appendChild(row);
+                });
+
+                container.appendChild(storeSection);
+            });
+
+            initNavigation();
+            filterAllTables();
+        }
+
+        function formatPrice(price) {
+            try {
+                const priceInt = parseInt(price, 10);
+                return `${(priceInt / 100).toFixed(2)} руб.`;
+            } catch (e) {
+                return 'N/A';
+            }
+        }
+
+        function initNavigation() {
+            const prevBtn = document.getElementById('prevStore');
+            const nextBtn = document.getElementById('nextStore');
+            const currentStoreDisplay = document.getElementById('currentStore');
+            const fixedHeader = document.getElementById('fixedHeader');
+            const stores = document.querySelectorAll('.store-section');
+
+            function updateFixedHeader() {
+                const activeSection = getActiveSection();
+                if (activeSection) {
+                    currentStoreDisplay.textContent = activeSection.querySelector('.store-title').textContent;
+                    fixedHeader.style.display = 'flex';
+                } else {
+                    fixedHeader.style.display = 'none';
+                }
+            }
+
+            function getActiveSection() {
+                const viewportHeight = window.innerHeight;
+                return Array.from(document.querySelectorAll('.store-section')).find(section => {
+                    const rect = section.getBoundingClientRect();
+                    return rect.top <= viewportHeight && rect.bottom >= 0;
+                });
+            }
+
+            function scrollToStore(index) {
+                const target = stores[index];
+                target.scrollIntoView({ behavior: 'smooth' });
+                updateFixedHeader();
+            }
+
+            prevBtn.onclick = () => {
+                currentStoreIndex = (currentStoreIndex - 1 + stores.length) % stores.length;
+                scrollToStore(currentStoreIndex);
+            };
+
+            nextBtn.onclick = () => {
+                currentStoreIndex = (currentStoreIndex + 1) % stores.length;
+                scrollToStore(currentStoreIndex);
+            };
+
+            window.addEventListener('scroll', () => {
+                const activeSection = getActiveSection();
+                if (activeSection) {
+                    const index = Array.from(stores).indexOf(activeSection);
+                    currentStoreIndex = index;
+                    updateFixedHeader();
+                }
+            });
+        }
+
+        function toggleSortDirection() {
+            sortDirection = sortDirection === 'desc' ? 'asc' : 'desc';
+            document.getElementById('sortDirection').textContent = sortDirection === 'desc' ? '▼' : '▲';
+            sortAllTables(document.querySelector('input[name="sort"]:checked').value);
+        }
+
+        function sortAllTables(column) {
+            document.querySelectorAll('.productTable').forEach(table => {
+                const rows = Array.from(table.querySelectorAll('tr:not(:first-child)'));
+                rows.sort((a, b) => {
+                    const aValue = a.cells[column === 'name' ? 1 : 2].textContent;
+                    const bValue = b.cells[column === 'name' ? 1 : 2].textContent;
+                    const compare = (a, b) => {
+                        if (column === 'price') {
+                            const numA = parseFloat(a.replace(/[^0-9.]/g, ''));
+                            const numB = parseFloat(b.replace(/[^0-9.]/g, ''));
+                            return numA - numB;
+                        } else {
+                            return a.localeCompare(b);
+                        }
+                    };
+                    const result = compare(aValue, bValue);
+                    return sortDirection === 'desc' ? -result : result;
+                });
+                table.tBodies[0].append(...rows);
+            });
+            filterAllTables();
+        }
+
+        function filterAllTables() {
+            const filter = document.getElementById('filterInput').value.toLowerCase();
+            const hideNoDiscount = document.getElementById('hideNoDiscount').checked;
+
+            document.querySelectorAll('.productTable').forEach(table => {
+                table.querySelectorAll('tr:not(:first-child)').forEach(row => {
+                    const name = row.cells[1].textContent.toLowerCase();
+                    const hasDiscount = row.querySelector('.discount-badge') !== null;
+                    row.style.display = (hideNoDiscount && !hasDiscount) || !name.includes(filter) ? 'none' : '';
+                });
+            });
+        }
+
+        function showImage(url) {
+            if (url === 'N/A') return;
+            document.getElementById('modalImage').src = url;
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        function closeImage() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        document.addEventListener('click', function(event) {
+            const modal = document.getElementById('imageModal');
+            if (event.target == modal) {
+                closeImage();
+            }
+        });
+    </script>
+</body>
+</html>
